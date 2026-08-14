@@ -1,0 +1,909 @@
+VBA 处理 Excel 数据时，最常用的核心操作包括：数组与字典定义、单元格区域转数组、数据遍历以及字符串处理。
+
+以下是相关知识点的完整语法说明与实用代码示例：
+
+1. 数组与字典的定义
+数组定义
+数组分为静态数组（固定长度）和动态数组（可重新设定大小）。
+
+VBA
+' 1. 静态数组（直接指定大小）
+Dim arrStatic(1 To 10) As String       ' 10个元素的字符串数组（下标1到10）
+
+' 2. 动态数组（稍后指定大小）
+Dim arrDynamic() As Variant            ' 声明动态数组
+ReDim arrDynamic(1 To 10, 1 To 2)      ' 重定义为10行2列的二维数组
+
+' 3. 用 Array 函数快速赋值（生成一维数组，默认下标从0开始）
+Dim arrQuick As Variant
+arrQuick = Array("苹果", "香蕉", "橘子")
+字典定义 (Scripting.Dictionary)
+字典用于存储 Key-Value 键值对，具有查找速度快、键唯一的特点。推荐使用后期绑定（无需额外勾选引用）：
+
+VBA
+' 声明并创建字典对象
+Dim dict As Object
+Set dict = CreateObject("Scripting.Dictionary")
+
+' 常用方法与属性：
+dict.Add "K001", "张三"        ' 添加元素 (Key不可重复)
+dict("K002") = "李四"          ' 直接赋值添加或修改
+If dict.Exists("K001") Then    ' 判断 Key 是否存在
+    ' ...
+End If
+dict.Remove "K001"             ' 删除指定 Key
+dict.RemoveAll                 ' 清空字典
+2. 读取 Excel 范围至数组与写入文件
+将单元格区域直接赋给 Variant 变量是 VBA 处理大数据最高效的方式，可以一次性读入内存处理。
+
+VBA
+Sub ReadAndWriteRange()
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("Sheet1")
+    
+    ' --- 取指定范围的值变成数组 ---
+    ' 提示：将 Range 直接赋给变量时，自动生成从 1 开始的【二维数组】 arr(行, 列)
+    Dim arr As Variant
+    arr = ws.Range("A1:C100").Value
+    
+    ' 读取数组中的值：第 2 行第 1 列
+    Dim firstCellVal As Variant
+    firstCellVal = arr(2, 1)
+    
+    ' --- 将数组或值写回文件 / 单元格 ---
+    ' 1. 单个单元格修改
+    ws.Range("E1").Value = "结果汇总"
+    
+    ' 2. 将整个二维数组直接批量写回单元格区域 (大小必须匹配)
+    ws.Range("E2:G101").Value = arr
+End Sub
+注意：如果需要操作外部 Excel 文件，可以使用 Set wb = Workbooks.Open("C:\path\file.xlsx") 打开，读取完毕后用 wb.Close SaveChanges:=True 保存并关闭。
+
+3. 数组与字典的遍历
+遍历数组
+处理 Range 转化来的二维数组时，必须使用双重循环：
+
+VBA
+Dim r As Long, c As Long
+
+' LBound 获取下界，UBound 获取上界
+' 第二个参数 1 表示行维数，2 表示列维数
+For r = LBound(arr, 1) To UBound(arr, 1)        ' 遍历行
+    For c = LBound(arr, 2) To UBound(arr, 2)    ' 遍历列
+        ' 处理每个元素
+        Debug.Print "行 " & r & " 列 " & c & " 的值: " & arr(r, c)
+    Next c
+Next r
+遍历字典
+字典可以通过 Keys 或 Items 集合进行遍历：
+
+VBA
+Dim k As Variant
+
+' 遍历所有 Key，并通过 dict(k) 获取对应 Value
+For Each k In dict.Keys
+    Debug.Print "键(Key): " & k & " -> 值(Value): " & dict(k)
+Next k
+4. 字符串拼接
+VBA 中推荐统一使用 & 运算符进行字符串拼接（使用 + 可能会在数字和字符串混用时触发隐式类型转换报错）。
+
+VBA
+Sub StringConcatExamples()
+    Dim str1 As String, str2 As String, res As String
+    str1 = "Excel"
+    str2 = "VBA"
+    
+    ' 1. 基础拼接
+    res = str1 & " " & str2 & " - 自动化办公"  ' 结果: "Excel VBA - 自动化办公"
+    
+    ' 2. 结合换行符
+    res = "第一行" & vbCrLf & "第二行"
+    
+    ' 3. 一维数组快速拼接 (Join 函数)
+    Dim words As Variant
+    words = Array("2026年", "8月", "10日")
+    
+    Dim fullDate As String
+    fullDate = Join(words, "-")  ' 结果: "2026年-8月-10日"
+End Sub
+5. 综合实操案例：字典去重与数据汇总
+以下演示如何结合上述知识，快速统计某列数据出现次数并写回表格：
+
+VBA
+Sub CountDuplicates()
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
+    
+    ' 1. 读取数据到数组
+    Dim lastRow As Long
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    
+    Dim srcData As Variant
+    srcData = ws.Range("A1:A" & lastRow).Value
+    
+    ' 2. 定义字典并计数
+    Dim dict As Object
+    Set dict = CreateObject("Scripting.Dictionary")
+    
+    Dim i As Long, keyName As String
+    For i = 1 To UBound(srcData, 1)
+        keyName = CStr(srcData(i, 1))
+        If keyName <> "" Then
+            dict(keyName) = dict(keyName) + 1  ' 不存在时自动创建并初始为1
+        End If
+    Next i
+    
+    ' 3. 将字典结果整理回二维数组输出
+    Dim resultArr() As Variant
+    ReDim resultArr(1 To dict.Count, 1 To 2)
+    
+    Dim idx As Long: idx = 1
+    Dim k As Variant
+    For Each k In dict.Keys
+        resultArr(idx, 1) = k
+        resultArr(idx, 2) = dict(k)
+        idx = idx + 1
+    Next k
+    
+    ' 4. 写回 Excel (C列和D列)
+    ws.Range("C1:D1").Value = Array("项目名称", "出现次数")
+    ws.Range("C2").Resize(dict.Count, 2).Value = resultArr
+End Sub
+
+
+
+
+将 B10:B12 区域的值保存到数组中，在 VBA 中主要有两种处理方式，区别在于生成的是二维数组还是一维数组：方法 1：直接赋值（最常用，生成二维数组）在 VBA 中，直接将单元格区域赋给变量，系统会自动将其转换为从 1 开始的二维数组，哪怕只有一列。VBASub RangeTo2DArray()
+    Dim arr As Variant
+    
+    ' 1. 读取 B10:B12 的值到数组
+    arr = Range("B10:B12").Value
+    
+    ' 2. 读取数组中的值 (格式为: arr(行, 列))
+    ' arr 的结构是 3 行 1 列：(1 To 3, 1 To 1)
+    Debug.Print "B10 的值: " & arr(1, 1)
+    Debug.Print "B11 的值: " & arr(2, 1)
+    Debug.Print "B12 的值: " & arr(3, 1)
+End Sub
+方法 2：使用 Transpose 转置（直接生成一维数组）如果后续代码处理一维数组更方便（例如使用 Join 拼接字符串），可以用 Application.Transpose 转置一次：VBASub RangeTo1DArray()
+    Dim arr1D As Variant
+    
+    ' 1. 将单列数据转置为一维数组 (下标为 1 到 3)
+    arr1D = Application.Transpose(Range("B10:B12").Value)
+    
+    ' 2. 读取数组中的值 (只需要单个索引)
+    Debug.Print "B10 的值: " & arr1D(1)
+    Debug.Print "B11 的值: " & arr1D(2)
+    Debug.Print "B12 的值: " & arr1D(3)
+    
+    ' 3. 示例：快速拼接成字符串 "值1,值2,值3"
+    Dim resultStr As String
+    resultStr = Join(arr1D, ",")
+    Debug.Print "拼接结果: " & resultStr
+End Sub
+两者的选择建议：需求推荐方法访问方式多行多列 数据提取 / 大数据批量读写方法 1（直接赋值）arr(行, 列)单行或单列 且需要配合 Join 拼接或遍历方法 2（Transpose 转置）arr(索引)
+
+
+
+------------------------------------------------------------------sql------------------------------------------------------------------------
+
+
+
+这个问题要分两个角度来看：对象间的创建依赖关系 和 大数据量迁移的性能最优顺序。两者结合起来，就是下面的阶段划分。
+先明确一下 Ora2PG 导出后的文件结构：
+schema/tables/table.sql          → CREATE TABLE（不含外置索引/约束）
+schema/tables/INDEXES_table.sql  → CREATE INDEX
+schema/tables/CONSTRAINTS_table.sql → CHECK, UNIQUE, PRIMARY KEY
+schema/tables/FKEYS_table.sql    → FOREIGN KEY
+schema/types/type.sql
+schema/sequences/sequence.sql
+schema/views/view.sql
+schema/mviews/mview.sql
+schema/functions/function.sql
+schema/procedures/procedure.sql
+schema/packages/package.sql
+schema/triggers/trigger.sql
+schema/dblinks/dblink.sql
+schema/synonyms/synonym.sql
+schema/grants/grant.sql
+schema/tablespaces/tablespace.sql
+推荐导入顺序（7 阶段）
+阶段	导入内容	原因
+1 - 基础设施	TABLESPACE, TYPE, SEQUENCE	这些是上层对象的前置依赖，且没有下游反向依赖
+2 - 表结构（不含索引/约束）	TABLE	先建空表，列结构到位即可
+3 - 依赖表的对象	VIEW, MVIEW, PARTITION	依赖表已存在
+4 - 索引 + 约束 + 外键	INDEXES, CONSTRAINTS, FKEYS	数据导入前或后均可。推荐数据后（大幅提升插入速度）
+5 - 数据	COPY data	空表插入最快
+6 - 存储过程/代码类	FUNCTION, PROCEDURE, PACKAGE, TRIGGER	依赖表和数据类型已存在；触发器推迟到数据后，避免数据导入时触发
+7 - 收尾	DBLINK, SYNONYM, GRANT	依赖所有目标对象就位；GRANT 需要 superuser
+
+实际执行命令
+以下基于你的 import_all.sh，用 -y 跳过交互。假设：数据库 mydb，owner myuser，主机 192.168.1.100，端口 5432。
+阶段 1：基础设施
+# TABLESPACE（需要 superuser，用 postgres 身份执行）
+psql -h 192.168.1.100 -p 5432 -U postgres -d mydb -f schema/tablespaces/tablespace.sql
+
+# TYPE
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/types/type.sql
+
+# SEQUENCE
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/sequences/sequence.sql
+阶段 2：表结构
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/tables/table.sql
+ psql -h 172.18.0.2 -p 5432 -U postgres -d target_db --single-transaction -f ./schema/tables/table.sql
+阶段 3：视图 / 物化视图
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/views/view.sql
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/mviews/mview.sql
+阶段 4：索引 + 约束 + 外键（推荐数据后执行，此处先跳过的写法）
+可以直接通过 import_all.sh 的交互选 No 来推迟，或者先不跑，等数据导入后再手动执行：
+# 索引
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb -f schema/tables/INDEXES_table.sql
+
+# 约束（CHECK, UNIQUE, PK）
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb -f schema/tables/CONSTRAINTS_table.sql
+
+# 外键
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb -f schema/tables/FKEYS_table.sql
+注意：这里不用 --single-transaction，因为索引/约束文件里通常是一堆 DDL 语句，每条独立提交更稳定。
+
+阶段 5：数据导入
+用 import_all.sh 的 -a（仅数据）模式：
+./import_all.sh -d mydb -o myuser -h 192.168.1.100 -p 5432 -a -y
+或者手动执行（如果已有 data.sql）：
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb -f data/data.sql
+阶段 6：存储过程 + 触发器
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/functions/function.sql
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/procedures/procedure.sql
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/packages/package.sql
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/triggers/trigger.sql
+阶段 7：收尾
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/dblinks/dblink.sql
+psql -h 192.168.1.100 -p 5432 -U myuser -d mydb --single-transaction -f schema/synonyms/synonym.sql
+
+# GRANT 需要 superuser
+psql -h 192.168.1.100 -p 5432 -U postgres -d mydb -f schema/grants/grant.sql
+如果你只想用 import_all.sh 一把搞定
+不拆阶段、自动应答、数据后加索引：
+./import_all.sh -d mydb -o myuser -h 192.168.1.100 -p 5432 -x -y
+-x → 数据后导入索引/约束/外键
+-y → 自动回答 Yes
+但它会在主循环里按 EXPORT_TYPE 的顺序逐个交互式确认 DDL 导入。加上 -y 后会自动走完，流程是：
+TABLE (table.sql) → VIEW → SEQUENCE → TRIGGER → FUNCTION → PROCEDURE → PARTITION → MVIEW → DBLINK → SYNONYM → DIRECTORY
+→ 询问是否现在导入索引/约束/外键？ → -y 默认 Yes，选立即导入（所以数据还没到，索引先建了）
+→ GRANT（用 postgres）
+→ TABLESPACE（用 postgres）
+→ 导入数据
+有没有注意到一个问题？-y 下它的默认行为是在数据导入前就建了索引。如果你要追求导入性能，应该用拆阶段的手动方式，或者在接受询问那一步手动选 No（但 -y 下无法区分）。所以大数据量迁移推荐按上面 7 个阶段手动执行，把阶段 4（索引/约束/外键）放在阶段 5（数据）后面。
+
+
+
+
+PostgreSQL 常用语句，按场景整理了一份：
+数据库 & 表管理
+-- 连接数据库
+psql -U username -d dbname -h host -p port
+
+-- 创建/删除数据库
+CREATE DATABASE dbname;
+DROP DATABASE dbname;
+
+-- 列出所有数据库
+\l
+
+-- 切换到数据库
+\c dbname
+
+-- 列出所有表
+\dt
+
+-- 查看表结构
+\d tablename
+
+-- 创建表
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 删除表
+DROP TABLE IF EXISTS tablename;
+
+-- 清空表（重置自增序列）
+TRUNCATE TABLE tablename RESTART IDENTITY;
+增删改查
+-- 插入
+INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com');
+INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com'), ('Carol', 'carol@example.com');
+
+-- 查询
+SELECT * FROM users;
+SELECT id, name FROM users WHERE name LIKE 'A%' ORDER BY created_at DESC LIMIT 10;
+
+-- 更新
+UPDATE users SET email = 'new@example.com' WHERE id = 1;
+
+-- 删除
+DELETE FROM users WHERE id = 1;
+聚合 & 分组
+SELECT department, COUNT(*), AVG(salary), MAX(salary), MIN(salary)
+FROM employees
+GROUP BY department
+HAVING COUNT(*) > 5
+ORDER BY AVG(salary) DESC;
+连接
+-- INNER / LEFT / RIGHT / FULL JOIN
+SELECT u.name, o.order_id, o.amount
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE o.amount IS NULL;  -- 没下过单的用户
+索引
+CREATE INDEX idx_users_email ON users(email);
+CREATE UNIQUE INDEX idx_users_email_unique ON users(email);
+CREATE INDEX idx_users_name_created ON users(name, created_at);
+
+-- 查看索引
+\di
+
+-- 删除索引
+DROP INDEX idx_users_email;
+进阶查询
+-- 分页
+SELECT * FROM users ORDER BY id LIMIT 20 OFFSET 40;
+
+-- 去重
+SELECT DISTINCT department FROM employees;
+
+-- 子查询
+SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 100);
+
+-- CTE (公用表表达式)
+WITH recent_orders AS (
+    SELECT user_id, SUM(amount) AS total
+    FROM orders
+    WHERE created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY user_id
+)
+SELECT u.name, COALESCE(r.total, 0) AS total_30d
+FROM users u
+LEFT JOIN recent_orders r ON u.id = r.user_id;
+窗口函数
+SELECT name, department, salary,
+       RANK() OVER (PARTITION BY department ORDER BY salary DESC) AS rank,
+       ROW_NUMBER() OVER (ORDER BY salary DESC) AS row_num,
+       LAG(salary) OVER (PARTITION BY department ORDER BY salary) AS prev_salary,
+       AVG(salary) OVER (PARTITION BY department) AS dept_avg
+FROM employees;
+事务
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;
+-- 或 ROLLBACK;
+常用函数
+-- 时间
+NOW(), CURRENT_DATE, AGE(timestamp, timestamp),
+DATE_TRUNC('month', created_at), EXTRACT(YEAR FROM created_at)
+
+-- 字符串
+LENGTH(), UPPER(), LOWER(), TRIM(), CONCAT(a, b),
+SUBSTRING('hello' FROM 2 FOR 3), REPLACE(str, old, new)
+
+-- 类型转换
+'123'::INTEGER, CAST('2024-01-01' AS DATE)
+
+-- 条件
+COALESCE(col, 'default'), NULLIF(a, b),
+CASE WHEN condition THEN result ELSE default END
+
+-- JSON / JSONB
+data->'key', data->>'key', data#>'{path,to,key}',
+jsonb_array_elements(data->'items')
+实用管理命令（psql 内）
+\dt          -- 列出表
+\di          -- 列出索引
+\dv          -- 列出视图
+\df          -- 列出函数
+\x           -- 扩展显示（行转列）
+\timing      -- 显示执行时间
+\o file.sql  -- 将输出写入文件
+\i file.sql  -- 执行 SQL 文件
+性能分析
+EXPLAIN SELECT * FROM users WHERE email = '...';
+EXPLAIN ANALYZE SELECT * FROM users WHERE email = '...';
+
+-- 查看慢查询（需要 pg_stat_statements 扩展）
+SELECT query, calls, total_time, rows
+FROM pg_stat_statements
+ORDER BY total_time DESC LIMIT 10;
+如果有想深入展开的方向（比如窗口函数、JSONB 操作、索引策略、备份恢复），可以继续聊。
+
+20:45
+
+postgres=#CREATE USER huyi WITH PASSWORD 'huyi'
+postgres=#CREATE DATABASE huyidb OWNER huyi; 
+postgres=#GRANT ALL PRIVILEGES ON DATABASE huyidb TO huyi; 
+
+postgres=#CREATE DATABASE huyidb2 OWNER huyi; 
+postgres=#GRANT ALL PRIVILEGES ON DATABASE huyidb2 TO huyi; 
+
+postgres=# \l
+
+
+psql  -h 127.0.0.1 -U huyi -d huyidb
+
+huyidb=> create table t1(a int);
+
+huyidb=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ public | t1   | table | huyi
+(1 row)
+
+
+# 创建和用户同名的huyi
+huyidb=>  create schema huyi;
+CREATE SCHEMA
+huyidb=> create table t2(a int);
+CREATE TABLE
+
+huyidb=> \dt 
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ huyi   | t2   | table | huyi
+ public | t1   | table | huyi
+(2 rows)
+
+huyidb=> show search_path;
+   search_path   
+-----------------
+ "$user", public
+(1 row)
+
+# 创建新的schem 的huyisc , 我们发现我们的schema owner 默认是我们的username 
+
+huyidb=> \dn
+  List of schemas
+  Name  |  Owner   
+--------+----------
+ huyi   | huyi
+ huyisc | huyi
+ public | postgres
+(3 rows)
+
+# 设置search_path
+set search_path = 'huyisc',"$user",public;
+huyidb=> show search_path ;
+       search_path       
+-------------------------
+ huyisc, "$user", public
+(1 row)
+
+# 创建T3表 指定huyisc
+huyidb=>  create table huyisc.t3(a int);
+CREATE TABLE
+huyidb=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ huyi   | t2   | table | huyi
+ huyisc | t3   | table | huyi
+ public | t1   | table | huyi
+(3 rows)
+2.2测试用户2
+# 新创建用户huyi2,新把huyidb2授权给 huyi2  ； 即huyidb2 同时授权给huyi，huyi2 两个用户
+
+postgres=#   CREATE USER huyi2 WITH PASSWORD 'huyi2' ;
+CREATE ROLE
+postgres=# 
+postgres=#  GRANT ALL PRIVILEGES ON DATABASE huyidb2 TO huyi2; 
+GRANT
+
+postgres=# \l
+                                List of databases
+   Name    |  Owner   | Encoding | Collate | Ctype |      Access privileges       
+-----------+----------+----------+---------+-------+------------------------------
+ huyidb    | huyi     | UTF8     | C       | C     | =Tc/huyi                    +
+           |          |          |         |       | huyi=CTc/huyi
+ huyidb2   | huyi     | UTF8     | C       | C     | =Tc/huyi                    +
+           |          |          |         |       | huyi=CTc/huyi               +
+           |          |          |         |       | huyi2=CTc/huyi
+
+
+
+# 以huyi2 用户在huyidb2 中创建 schema  testsc 指定owner 为 huyi
+postgres=# GRANT "huyi" to huyi2;
+GRANT ROLE
+
+psql  -h 127.0.0.1 -U huyi2 -d huyidb2
+
+huyidb2=> create schema testsc AUTHORIZATION huyi ; 
+CREATE SCHEMA
+
+huyidb2=> \dn 
+  List of schemas
+  Name  |  Owner   
+--------+----------
+ public | postgres
+ testsc | huyi
+(2 rows)
+
+
+set search_path = 'testsc',"$user",public;
+
+# 创建T4表指定testsc 
+
+huyidb2=>  create table testsc.t4(a int);
+CREATE TABLE
+huyidb2=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ testsc | t4   | table | huyi2
+(1 row)
+
+# 这时虽然Schema 的Owner 是 huyi  ,但table 的owner 还是huyi2 所以用huyi是查不到t4 数据库的
+psql  -h 127.0.0.1 -U huyi  -d huyi2
+huyidb2=>  select * from testsc.t4;
+ERROR:  permission denied for table t4
+
+# 更改t4表的owner 到huyi 后可以查询 
+psql  -h 127.0.0.1 -U huyi2  -d huyi2
+huyidb2=>  alter table testsc.t4 OWNER TO huyi ;
+ALTER TABLE
+huyidb2=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ testsc | t4   | table | huyi
+(1 row)
+
+huyidb2=> 
+
+#在次以huyi 用户登录查询  
+psql  -h 127.0.0.1 -U huyi  -d huyi2
+huyidb2=>  select * from testsc.t4;
+ a 
+---
+(0 rows)
+
+#现在用huyi 还是huyi2用户 都可查询 ，
+#huyi 用户
+huyidb2=> select * from testsc.t4;
+ a 
+---
+(0 rows)
+
+
+#huyi2 用户
+huyidb2=> select * from testsc.t4;
+ a 
+---
+(0 rows)
+
+#因为huyidb库里面 ，huyi2 里有 huyi信息的Member  ;
+huyidb2=> \du 
+                                            List of roles
+    Role name    |                         Attributes                         |       Member of       
+-----------------+------------------------------------------------------------+-----------------------
+ huyi            |                                                            | {}
+ huyi2           |                                                            | {huyi}
+
+
+select current_schemas(true);
+
+#当 回收huyi2用户里的 huyi的member 信息时，就没有权限
+postgres@s2ahumysqlpg01->    psql  -h 127.0.0.1
+psql (12.4)
+Type "help" for help.
+
+postgres=# revoke  "huyi" from huyi2;
+REVOKE ROLE
+postgres=# quit
+postgres@s2ahumysqlpg01-> psql  -h 127.0.0.1 -U huyi2 -d huyidb2
+psql (12.4)
+Type "help" for help.
+
+huyidb2=> select * from testsc.t4;
+ERROR:  permission denied for schema testsc
+
+
+
+#这里要用同时授权这2个权限， huyi2步可以又访问t4这张表了
+grant USAGE on SCHEMA testsc to huyi2 ;
+
+grant SELECT on testsc.t4 to huyi2 ;
+
+
+
+postgres@s2ahumysqlpg01-> psql  -h 127.0.0.1 -U huyi2 -d huyidb2
+psql (12.4)
+Type "help" for help.
+
+huyidb2=> select * from testsc.t4;
+ a 
+---
+(0 rows)
+2.3 补充
+select current_database();  --当前db 或直接 \c
+select current_user;        ---查看当前用户  \ 或 select user;  
+
+pg_catalog存放了各系统表,内置函数等等,它总是在搜索路径中,需要通过current_schemas看到
+
+select current_schemas(true);
+show  search_path ; 
+
+在 PostgreSQL 的 psql 命令行工具中，所有以 \ 开头的都是元命令（Meta-Commands），用于查看和管理数据库对象。以下是常用命令总结：
+
+👤 用户与权限管理
+命令	作用
+\du	列出所有数据库用户（角色）及其属性
+\du+	更详细地列出用户信息（包含描述）
+\dg	同 \du，列出所有角色
+\drds	显示每个数据库的角色设置
+\dp 或 \z	显示表的权限分配情况
+🗄️ 数据库与表对象查看
+命令	作用
+\l	列出所有数据库
+\l+	更详细地列出数据库（包含大小、描述）
+\c <数据库名>	切换到指定数据库
+\dt	列出当前数据库中所有表
+\dt+	更详细地列出表（包含大小、描述）
+\dt *.*	列出所有模式下的所有表
+\dt testsc.*	列出 testsc 模式下的所有表
+\d	列出当前数据库的所有对象（表、视图、序列等）
+\d <表名>	查看指定表的结构（字段、类型、约束）
+\d+ <表名>	更详细地查看表结构（包含存储信息）
+\di	列出所有索引
+\dv	列出所有视图
+\ds	列出所有序列
+\df	列出所有函数
+\df+	更详细地列出函数（包含源代码）
+🧩 模式（Schema）管理
+命令	作用
+\dn	列出所有模式
+\dn+	更详细地列出模式（包含描述）
+\dx	列出所有已安装的扩展（Extensions）
+📊 查询与执行相关
+命令	作用
+\g	重复执行上一条 SQL 命令
+\g <文件名>	将上一条 SQL 的执行结果输出到文件
+\x	切换扩展显示模式（按列显示，便于查看宽表）
+\x on / \x off	开启/关闭扩展显示模式
+\timing	切换 SQL 执行时间显示（显示每条 SQL 耗时）
+\o <文件名>	将后续所有查询结果输出到文件
+\o	恢复输出到终端
+🛠️ 系统信息与配置
+命令	作用
+\conninfo	显示当前连接信息（数据库、用户、端口）
+\encoding	显示当前客户端编码
+\version	显示 PostgreSQL 版本信息
+\show	显示运行时配置参数（如 \show search_path）
+\set	显示或设置 psql 变量
+\unset	取消设置 psql 变量
+📁 文件与外部操作
+命令	作用
+\i <文件名>	执行 SQL 文件（导入）
+\ir <文件名>	执行 SQL 文件（相对于当前目录）
+\o <文件名>	将输出重定向到文件
+\copy	执行导入/导出数据操作（比 COPY 更灵活）
+\! <系统命令>	执行系统 shell 命令（如 \! ls）
+🧹 历史与帮助
+命令	作用
+\h 或 \help	查看 SQL 命令帮助
+\h <SQL命令>	查看特定 SQL 命令的帮助（如 \h SELECT）
+\?	列出所有元命令的帮助
+\s	显示命令历史
+\s <文件名>	将命令历史保存到文件
+\q	退出 psql
+🎨 显示格式控制
+命令	作用
+\pset format <格式>	设置输出格式（如 aligned、csv、html、latex 等）
+\pset border <值>	设置表格边框样式
+\a	切换非对齐模式
+\H	切换 HTML 输出模式
+\t	切换只显示数据（不显示列名和行数）
+💡 实用组合技巧
+组合命令	作用
+\l+	查看所有数据库及大小
+\dt+	查看所有表及大小
+\d+ 表名	查看表结构、索引、约束等完整信息
+\x \dt	扩展显示模式下查看表列表（便于横向阅读）
+\du+	查看用户详细权限信息
+📝 总结
+这些元命令的核心用途：
+
+\du → 查看用户权限（你问过的）
+
+\dt → 查看表（当 \d 显示 "Did not find any relations" 时，用这个指定查看表）
+
+\dn → 查看模式（确认表在哪个模式下）
+
+\l → 查看数据库（确认当前在哪个库）
+
+\c → 切换数据库（解决连接错库的问题）
+
+如果你在执行某个命令时遇到了问题，可以告诉我具体场景，我帮你选最合适的命令。😊
+
+
+------------------------------------------###########------------------------------------------------------------------------------------
+
+从 Oracle 转向 PostgreSQL（简称 PG）时，你会发现大部分对象概念是相通的，但在底层实现和语法上有很大的不同。特别需要注意的是：PostgreSQL 原生没有类似 Oracle 的 PACKAGE（程序包）、DBLINK（直接作为对象创建）和 DIRECTORY 对象的语法，但 PG 提供了功能相同或更优雅的替代方案（如 Schema、FDW 等）。
+
+同样为你分为 4 大类，带你看看 PostgreSQL 版本的实现：
+
+一、 数据存储核心（Core Data Storage）
+1. TABLE (表)
+含义：结构化数据存储的核心单元。与 Oracle 不同的是，PG 支持更丰富的原生数据类型（如 JSONB、数组、UUID 等）。
+
+例子：创建一个员工表，其中 emp_id 使用自增类型。
+
+SQL
+CREATE TABLE employees (
+    emp_id SERIAL PRIMARY KEY, -- SERIAL 会自动创建序列并绑定
+    emp_name VARCHAR(50),
+    salary NUMERIC(10, 2)
+);
+2. SEQUENCE (序列)
+含义：自动递增的数字生成器。在 PG 中，除了用 SERIAL 隐式创建外，也可以显式创建。
+
+例子：创建一个从 1001 开始的序列。
+
+SQL
+CREATE SEQUENCE emp_seq START WITH 1001;
+
+-- 使用时通过 nextval() 函数获取：
+-- INSERT INTO employees VALUES (nextval('emp_seq'), '张三', 5000);
+3. TYPE (类型)
+含义：PG 的自定义类型非常强大。最常用的是复合类型（Composite Type，类似结构体）和枚举类型（ENUM）。
+
+例子：创建一个代表周几的枚举类型。
+
+SQL
+CREATE TYPE week_day AS ENUM ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday');
+
+-- 之后可以作为表的字段类型：CREATE TABLE t (day_off week_day);
+二、 逻辑视图与安全访问（Logical Views & Security）
+4. VIEW (视图)
+含义：虚拟表，保存一段查询 SQL。PG 的视图同样不占用物理存储空间。
+
+例子：创建一个只看高薪员工的视图。
+
+SQL
+CREATE VIEW high_salary_emp AS
+SELECT emp_id, emp_name 
+FROM employees 
+WHERE salary > 8000;
+5. MVIEW / Materialized View (物化视图)
+含义：将查询结果物理存储在磁盘上的视图。刷新时，PG 提供了 CONCURRENTLY 参数，允许在不阻塞查询的情况下进行并发刷新（需要有唯一索引）。
+
+例子：创建并刷新一个物化视图。
+
+SQL
+CREATE MATERIALIZED VIEW dept_salary_mv AS 
+SELECT emp_name, SUM(salary) AS total_sal FROM employees GROUP BY emp_name;
+
+-- 刷新物化视图：REFRESH MATERIALIZED VIEW dept_salary_mv;
+6. SYNONYM (同义词 —— PG无原生对象，用视图/Search Path替代)
+含义：PostgreSQL 官方原生不支持 CREATE SYNONYM 语法。PG 通常通过配置 search_path（模式搜索路径）或者直接创建一个简单的 VIEW 来实现别名功能。
+
+例子：用视图代替同义词。
+
+SQL
+-- 模拟 Oracle 的别名功能
+CREATE VIEW emp AS SELECT * FROM employees;
+7. DBLINK (远程连接 —— PG中为扩展模块或 FDW)
+含义：跨库查询。在 PG 中，dblink 是一个官方自带的扩展模块，更现代、更推荐的做法是使用 FDW（外部数据包装器，Foreign Data Wrapper）。
+
+例子：使用 PG 自带的 dblink 扩展进行跨库查询。
+
+SQL
+-- 1. 首先需要安装扩展
+CREATE EXTENSION dblink;
+
+-- 2. 直接在查询中连接远程库
+SELECT * FROM dblink('host=192.168.1.100 dbname=remote_db user=res_user password=pwd',
+                     'SELECT emp_id, emp_name FROM employees')
+AS remote_data(emp_id INT, emp_name VARCHAR);
+8. GRANT (授权)
+含义：将表、视图、序列等对象的权限授予指定的用户或角色。
+
+例子：把 employees 表的只读权限赋给用户 tom。
+
+SQL
+GRANT SELECT ON TABLE employees TO tom;
+三、 存储过程与业务逻辑（PL/pgSQL Code）
+9. PACKAGE (程序包 —— PG无原生对象，用 Schema 替代)
+含义：PostgreSQL 没有 Oracle 的 PACKAGE 对象。在 PG 中，通常利用 Schema（模式） 来实现类似包的命名空间隔离，将相关的函数、存储过程放到同一个 Schema 下。
+
+例子：用 Schema 模拟包的分组。
+
+SQL
+CREATE SCHEMA emp_mgmt_pkg;
+
+-- 在该 Schema 下创建函数，调用时通过 emp_mgmt_pkg.get_monthly_sal()
+CREATE FUNCTION emp_mgmt_pkg.get_monthly_sal(ann_sal NUMERIC) ...
+10. FUNCTION (函数)
+含义：执行特定逻辑并必须返回值。PG 的旧版本（11以前）只有函数，函数内部默认不能直接执行 COMMIT/ROLLBACK（除非用特殊方式）。
+
+例子：创建一个计算月薪的函数（使用 PL/pgSQL 语言）。
+
+SQL
+CREATE OR REPLACE FUNCTION get_monthly_sal (ann_sal NUMERIC) 
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN ann_sal / 12.0;
+END;
+$$ LANGUAGE plpgsql;
+11. PROCEDURE (存储过程)
+含义：PG 从 11 版本开始正式引入 PROCEDURE。与函数不同，存储过程没有返回值，并且支持在内部使用 COMMIT 和 ROLLBACK 进行事务控制。
+
+例子：更新薪资并提交事务的存储过程。
+
+SQL
+CREATE OR REPLACE PROCEDURE update_sal (p_id INT, p_sal NUMERIC) AS $$
+BEGIN
+    UPDATE employees SET salary = p_sal WHERE emp_id = p_id;
+    COMMIT; -- 支持事务提交
+END;
+$$ LANGUAGE plpgsql;
+
+-- 调用方法：CALL update_sal(1, 6000);
+12. TRIGGER (触发器)
+含义：事件驱动的自动执行程序。在 PG 中，定义触发器分两步：先写一个返回类型为 TRIGGER 的触发器函数，再创建触发器本身与表绑定。
+
+例子：
+
+SQL
+-- 1. 定义触发器函数
+CREATE OR REPLACE FUNCTION log_emp_insert() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE NOTICE '准备插入新员工: %', NEW.emp_name;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2. 创建触发器绑定到表
+CREATE TRIGGER trg_before_emp_ins
+BEFORE INSERT ON employees
+FOR EACH ROW EXECUTE FUNCTION log_emp_insert();
+四、 物理存储与系统管理（Physical & Infrastructure）
+13. TABLESPACE (表空间)
+含义：定义在文件系统中的一个目录，用来指定 PG 数据库在磁盘上存储物理文件的实际位置。
+
+例子：创建一个表空间指向服务器的某个挂载盘目录（该目录必须为空且 pg 账号有读写权限）。
+
+SQL
+CREATE TABLESPACE tbs_data LOCATION '/mnt/ssd_disk/pg_data';
+
+-- 创建表时指定表空间：CREATE TABLE t (...) TABLESPACE tbs_data;
+14. PARTITION (分区)
+含义：PG 从 10 版本开始引入了声明式分区（Declarative Partitioning）。将一张大表按照某种规则，物理上拆分为多个分区子表。
+
+例子：按范围（RANGE）创建订单分区主表和子表。
+
+SQL
+-- 创建主表（不存实际数据）
+CREATE TABLE sales (
+    sale_id INT,
+    sale_date DATE NOT NULL,
+    amount NUMERIC
+) PARTITION BY RANGE (sale_date);
+
+-- 创建真实存储数据的分区子表
+CREATE TABLE sales_2025 PARTITION OF sales
+    FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+15. DIRECTORY (目录 —— PG无原生对象，用系统命令/扩展替代)
+含义：PostgreSQL 没有像 Oracle 那样的 CREATE DIRECTORY 对象。PG 在读写服务器本地文件时（如 COPY 命令或 adminpack 扩展），直接在 SQL 语句中指定服务器的绝对路径。
+
+例子：在 PG 中直接利用服务器路径导出数据。
+
+SQL
+-- PG 不需要建目录对象，直接由超级用户指定绝对路径
+COPY employees TO '/var/lib/postgresql/data/emp_export.csv' WITH CSV HEADER;
+
+
+
