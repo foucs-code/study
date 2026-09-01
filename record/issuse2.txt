@@ -173,3 +173,503 @@ Sources:
 - PostgreSQL 序列重置:START WITH、RESTART WITH 和 SETVAL 的区别(ora2pg 的 START WITH bug) (https://www.modb.pro/db/2036266445605265408)
 - Google Cloud Database Migration Service:给迁移表加序列主键的标准写法(OWNED BY) (https://cloud.google.com/database-migration/docs/oracle-to-alloydb/migrate-tables-without-pks)
 - pgsql-general:非空表加 IDENTITY 列的序列起点问题 (https://www.postgresql.org/message-id/7435ef5f-f662-15f0-6ebc-b4b1b7cf1156%40lucee.org)
+
+
+
+
+
+
+❯ postgre中函数的常用语法总结
+
+  Thought for 49s
+
+PostgreSQL 函数(主要是 PL/pgSQL)常用语法整理如下:
+
+1. 基本结构
+
+CREATE OR REPLACE FUNCTION 函数名(参数列表)
+RETURNS 返回类型
+LANGUAGE plpgsql                 -- 最常用;也有 sql、plpython 等
+VOLATILE | STABLE | IMMUTABLE    -- 可省略,默认 VOLATILE
+AS $$
+BEGIN
+    ...函数体...
+END;
+$$;
+
+- $$ ... $$ 叫 dollar-quoting,里面可以直接写单引号,不用转义
+- 参数写形如 name type,注意类型名带逗号的要加括号:in x double precision
+- 函数签名(名字 + 参数类型)是身份,同名不同参叫重载,可以共存
+
+2. 参数与返回值
+
+-- 带默认值
+CREATE FUNCTION add(a int, b int DEFAULT 10) RETURNS int AS $$
+BEGIN RETURN a + b; END $$;
+
+-- OUT 参数(相当于直接"返回多列")
+CREATE FUNCTION get_user(IN id int, OUT name text, OUT age int) AS $$
+BEGIN
+    SELECT name, age INTO name, age FROM users WHERE users.id = id;
+END $$;
+
+-- 返回结果集
+CREATE FUNCTION list_users() RETURNS SETOF users AS $$          -- 表类型
+    SELECT * FROM users;
+$$ LANGUAGE sql;
+
+CREATE FUNCTION list() RETURNS TABLE (id int, name text) AS $$   -- 匿名列
+BEGIN
+    RETURN QUERY SELECT id, name FROM users;
+END $$;
+
+CREATE FUNCTION list_records() RETURNS SETOF record AS $$        -- 调用时才能定列
+...
+
+常用返回方式:
+- RETURN 值; — 单个值
+- RETURN NEXT 值; — 循环里逐行吐出
+- RETURN QUERY SELECT ...; — 直接吐一个查询结果
+
+3. 变量与赋值
+
+DECLARE
+    v_id   int := 0;
+    v_name text := '默认';
+    r      RECORD;                       -- 通用行变量
+    c      refcursor;                    -- 游标
+    v_row  users%ROWTYPE;               -- 整行类型(和 Oracle 一样)
+    v_col  users.name%TYPE;             -- 列类型
+BEGIN
+    v_id := v_id + 1;
+    SELECT name, age INTO v_name, v_id FROM users WHERE id = 1;
+    -- 注意:没查到记录会抛 NO_DATA_FOUND,查到多行抛 TOO_MANY_ROWS
+END;
+
+4. 控制流
+
+IF a > 10 THEN
+    ...
+ELSIF a > 5 THEN          -- 注意是 ELSIF,不是 ELSEIF
+    ...
+ELSE
+    ...
+END IF;
+
+CASE x
+    WHEN 1 THEN ...
+    WHEN 2 THEN ...
+    ELSE ...
+END CASE;
+
+5. 循环
+
+-- 数字循环
+FOR i IN 1..10 LOOP
+    RAISE NOTICE 'i = %', i;
+END LOOP;
+FOR i IN REVERSE 10..1 LOOP ... END LOOP;
+
+-- 遍历查询结果
+FOR r IN SELECT * FROM users WHERE age > 20 LOOP
+    RAISE NOTICE '%', r.name;
+END LOOP;
+
+-- 条件循环
+WHILE count < 10 LOOP ... END LOOP;
+LOOP ... EXIT WHEN cond; END LOOP;        -- 无限循环 + 退出条件
+
+-- 遍历数组
+FOREACH v IN ARRAY arr LOOP ... END LOOP;
+
+6. 异常处理
+
+BEGIN
+    INSERT INTO users ...
+EXCEPTION
+    WHEN unique_violation THEN
+        RAISE NOTICE '主键冲突';
+    WHEN no_data_found THEN
+        ...
+    WHEN OTHERS THEN                       -- 兜底
+        RAISE;                             -- 原样重新抛出
+END;
+
+常用错误名:unique_violation、foreign_key_violation、not_null_violation、no_data_found、too_many_rows、division_by_zero。
+
+7. 抛出信息
+
+RAISE NOTICE '用户 % 已存在', v_name;      -- 打印,不中断
+RAISE EXCEPTION '非法参数 %', v_id;         -- 抛错中断,等价于抛出异常
+RAISE EXCEPTION USING ERRCODE = 'unique_violation', MESSAGE = '重复';
+
+8. 动态 SQL(表名/列名来自变量时)
+
+-- 表名、列名必须用 %I(带引号防注入),值用 $1 + USING
+EXECUTE format('SELECT count(*) FROM %I WHERE status = $1', tbl)
+    INTO v_cnt USING 'active';
+
+-- 动态 DDL 也是一样
+EXECUTE format('CREATE INDEX idx_%I ON %I (id)', tbl, tbl);
+
+9. 触发器函数
+
+CREATE FUNCTION set_updated_at() RETURNS trigger AS $$
+BEGIN
+    NEW.updated_at := now();      -- NEW 是新的行,OLD 是旧行
+    RETURN NEW;                   -- 返回 NULL 则取消该行操作
+END $$;
+
+CREATE TRIGGER trg_users_upd
+BEFORE UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+10. DO 块(不建函数,临时跑一段)
+
+DO $$
+DECLARE v int := 0;
+BEGIN
+    FOR v IN 1..5 LOOP
+        RAISE NOTICE '%', v;
+    END LOOP;
+END $$;
+
+11. 修改 / 删除 / 查看
+
+ALTER FUNCTION 函数名(int) OWNER TO someuser;       -- 改属性
+ALTER FUNCTION 函数名(int) VOLATILE;                -- 改稳定级别
+DROP FUNCTION 函数名(int);                          -- 删除(要带参数类型)
+\df 函数名                                          -- psql 里看函数定义
+
+12. 和 Oracle PL/SQL 的差异(迁移时容易踩)
+
+┌────────────────────────────────────────┬─────────────────────────────────────────────┐
+│                 Oracle                 │                 PostgreSQL                  │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ IS / AS + 单引号正文                   │ AS $$ ... $$                                │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ EXECUTE IMMEDIATE ... USING            │ EXECUTE ... USING                           │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ DUP_VAL_ON_INDEX                       │ unique_violation                            │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ SELECT ... INTO 查不到要判断 %NOTFOUND │ 会直接抛 no_data_found(或用 LIMIT 1/STRICT) │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ NVL(), SYSDATE                         │ COALESCE(), now() / clock_timestamp()       │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ RETURNING 有限                         │ INSERT ... RETURNING 很常用                 │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ 游标 OPEN FOR                          │ 通常直接 FOR r IN 或 RETURN QUERY           │
+├────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ SEQUENCE.NEXTVAL                       │ nextval('seq') 或列默认值                   │
+└────────────────────────────────────────┴─────────────────────────────────────────────┘
+
+如果你需要针对某个具体场景(比如从 Oracle 存储过程改写、批量重命名、复杂游标处理)展开,可以再细说。
+
+
+
+
+连接(JOIN)是 SQL 层面的东西,跟 PL/pgSQL 无关,放心。下面按常用程度给你举例,统一用这几张示例表:
+
+users(id, name, dept_id)
+dept(id, name)
+orders(id, user_id, amount, created_at)
+
+1. INNER JOIN — 内连接(交集,最常见)
+
+SELECT u.name, d.name AS dept_name
+FROM users u
+JOIN dept d ON d.id = u.dept_id;
+
+只返回两边都匹配得上的行。JOIN 默认就是 INNER JOIN,两者等价。没有任何匹配的部门/用户不会出现。
+
+2. LEFT / RIGHT / FULL JOIN — 外连接(保某一侧所有行)
+
+-- 左连接:左表(users)全部保留,右表匹配不到就补 NULL
+SELECT u.name, d.name
+FROM users u
+LEFT JOIN dept d ON d.id = u.dept_id;
+
+-- 右连接:反过来的左连接,不常用
+SELECT u.name, d.name
+FROM users u
+RIGHT JOIN dept d ON d.id = u.dept_id;
+
+-- 全外连接:两边都保留,匹配不到补 NULL
+SELECT u.name, d.name
+FROM users u
+FULL OUTER JOIN dept d ON d.id = u.dept_id;
+
+外连接是最常用的找"孤儿数据"的方法,比如找没下过单的用户:
+
+SELECT u.name
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+WHERE o.id IS NULL;          -- 关键:左连接后,右表为 NULL 的行就是没匹配上的
+
+3. ON 的多个条件 / ON 和 WHERE 的区别
+
+-- ON 里可以写多个条件,或非等值条件
+FROM orders o
+JOIN users u ON u.id = o.user_id AND u.name LIKE '张%';
+
+-- 区别:ON 是"连接条件"(决定是否匹配),
+--      WHERE 是"连接完之后再过滤"
+-- 外连接时尤其要注意:过滤条件放 WHERE 会丢掉 LEFT JOIN 补出来的 NULL 行
+-- 放 ON 则不影响保留的左侧行
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id AND o.amount > 100;   -- 左表仍全保留
+
+4. USING 简化同名列连接
+
+-- 两边列名相同时,可简写(结果里该列只出现一次,不带表前缀)
+FROM users u
+JOIN dept d USING (id);
+
+-- NATURAL JOIN 自动按所有同名列连接,别用,隐蔽的坑
+
+5. 多表连接
+
+SELECT u.name, d.name, sum(o.amount) AS total
+FROM users u
+JOIN dept d ON d.id = u.dept_id
+LEFT JOIN orders o ON o.user_id = u.id
+GROUP BY u.name, d.name;
+
+6. 自连接 — 同一张表连自己(通常用别名区分)
+
+-- 找同部门的同事对
+SELECT a.name AS emp, b.name AS colleague
+FROM users a
+JOIN users b ON a.dept_id = b.dept_id AND a.id < b.id;
+
+7. 半连接 / 反连接:IN / EXISTS / NOT IN / NOT EXISTS(高频)
+
+-- 有订单的用户
+SELECT name FROM users WHERE id IN (SELECT user_id FROM orders);
+-- 等价写法,大表时 EXISTS 通常更快
+SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
+
+-- 没下过单的用户(NOT IN 遇到 NULL 会出问题,推荐 NOT EXISTS)
+SELECT name FROM users u
+WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id);
+
+▎ 注意:子查询里有 NULL 时,NOT IN 整个结果为空,NOT EXISTS 不会。这是经典的坑,统一用 NOT EXISTS 更安全。
+
+8. 非等值连接(范围连接)
+
+-- 按区间匹配
+FROM coupon c
+JOIN user_level l ON u.points BETWEEN l.min_points AND l.max_points;
+
+9. CROSS JOIN — 笛卡尔积(慎用)
+
+SELECT u.name, d.name
+FROM users u CROSS JOIN dept d;    -- 每行 user × 每行 dept
+
+10. LATERAL — PG 特色,非常实用
+
+可以让子查询引用前面表的列,相当于"每行算一次":
+
+-- 每个用户最近一单
+SELECT u.name, o.amount
+FROM users u
+LEFT JOIN LATERAL (
+    SELECT amount FROM orders WHERE user_id = u.id
+    ORDER BY created_at DESC LIMIT 1
+) o ON true;
+
+-- 简化版:LEFT JOIN LATERAL 的 ON true 常被省略(子查询结果可能为空时用它)
+
+11. 集合运算(合并结果集,不是 JOIN 但常放一起问)
+
+SELECT id FROM users_a
+UNION          -- 去重合并
+SELECT id FROM users_b;
+
+UNION ALL      -- 不去重,更快
+INTERSECT      -- 交集
+EXCEPT         -- 差集(A 有 B 没有)
+
+12. 从 Oracle 过来要注意的点
+
+┌─────────────────────────────────┬──────────────────────────┐
+│             Oracle              │        PostgreSQL        │
+├─────────────────────────────────┼──────────────────────────┤
+│ WHERE a.id = b.id(+)            │ LEFT JOIN(PG 不支持 (+)) │
+├─────────────────────────────────┼──────────────────────────┤
+│ ROWNUM                          │ LIMIT / FETCH FIRST      │
+├─────────────────────────────────┼──────────────────────────┤
+│ CONNECT BY ... START WITH(树形) │ WITH RECURSIVE ...       │
+├─────────────────────────────────┼──────────────────────────┤
+│ DECODE, NVL                     │ CASE, COALESCE           │
+└─────────────────────────────────┴──────────────────────────┘
+
+---
+给你个记忆框架:JOIN 就三种场景 —— 只要两边都匹配(INNER)、保住一边(LEFT/RIGHT)、加上子查询过滤(IN/EXISTS)。写查询时先明确"我要保留哪边的所有行",再决定用哪种连接。
+
+要不要我针对你的实际表结构,写几个具体连接的例子?你贴一两张表的建表语句就行。
+
+
+
+
+PostgreSQL 常用内置函数,按类别总结(标注了从 Oracle 过来的对应写法):
+
+1. 字符串函数
+
+-- 大小写 / 长度
+upper(name), lower(name), initcap(name)
+length(s), char_length(s)          -- 字符数(中文算 1)
+
+-- 裁剪 / 填充
+trim(s), ltrim(s), rtrim(s), btrim(s, 'xy')
+lpad(s, 10, '0'), rpad(s, 10, '.')
+
+-- 截取 / 查找
+substring(s FROM 1 FOR 5)          -- 等价 substr(s, 1, 5),两个都支持
+strpos(s, 'abc')                   -- 查子串位置(Oracle: INSTR)
+position('abc' IN s)               -- 同上
+split_part('a,b,c', ',', 2)        -- 取第 2 段 -> 'b'(Oracle 要 SUBSTR+INSTR 拼)
+
+-- 拼接
+concat('a', NULL, 'b')             -- 'ab'(跳过 NULL)
+'a' || 'b' || NULL                 -- NULL || 会变 NULL,注意
+concat_ws('-', 'a', 'b', 'c')      -- 'a-b-c'
+
+-- 替换 / 重复 / 反转
+replace('abcabc', 'a', 'x')        -- 'xbcxbc'
+repeat('ab', 3), reverse('abc')
+
+-- 正则
+regexp_replace('a1b2c', '[0-9]', '', 'g')   -- 全局替换
+regexp_match('abc123', '[0-9]+')            -- 返回数组,取第一个匹配
+substring('abc123' FROM '[0-9]+')           -- 提取
+
+-- 格式化输出
+to_char(1234.5, 'FM999,999.99')    -- '1,234.5'
+
+2. 数值函数
+
+abs(x), ceil(x), floor(x)
+round(x, 2), trunc(x, 2)           -- trunc 直接截断,不像 round 四舍五入
+mod(a, b), div(a, b)               -- 取余 / 整除
+power(2, 10), sqrt(x), exp(x), ln(x), log(x)  -- log 默认底数 10
+random()                           -- [0,1) 随机数
+greatest(a, b, c), least(a, b, c)  -- 任意类型都能用(相当于 Oracle 的 GREATEST/LEAST)
+
+3. 日期时间函数(迁移里最容易错的地方)
+
+-- 当前时间
+now()              -- 事务开始时间,常用(Oracle: SYSDATE)
+current_timestamp, current_date, current_time
+clock_timestamp()  -- 真实调用时刻(逐行不同),需要精确计时才用
+statement_timestamp()  -- 当前语句开始时间
+
+-- 取部分
+date_part('year', ts)      -- 等价 extract(year FROM ts)
+extract(month FROM ts)     -- 推荐这种写法
+
+-- 截断(和 Oracle 的 TRUNC(date) 对应)
+date_trunc('day', now())       -- 今天的 00:00:00
+date_trunc('month', now())     -- 本月 1 号 00:00:00
+date_trunc('week', now())
+
+-- 日期运算(直接用 interval,比 Oracle 的 ADD_MONTHS 灵活)
+now() + interval '1 day'
+now() - interval '2 hours'
+current_date + 3                          -- 加 3 天
+now() + interval '1 month'                -- 等价 ADD_MONTHS(月末行为略不同)
+
+-- 两个时间的差
+age(t2, t1)                        -- 返回 '1 year 2 mons 3 days' 这种
+t2 - t1                            -- 返回 interval
+
+-- 转换
+to_date('2024-01-15', 'YYYY-MM-DD')
+to_timestamp('2024-01-15 10:30:00', 'YYYY-MM-DD HH24:MI:SS')
+to_char(ts, 'YYYY-MM-DD HH24:MI:SS')
+
+▎ 格式符差异:PG 的 to_char 和 Oracle 大部分通用(YYYY MM DD HH24 MI SS),但分秒小数不一样:Oracle 是 FF,PG 是 MS/US;年份 RR 在 PG 里是 YY。跨库写 to_char 要核对。
+
+4. 条件 / NULL 处理
+
+COALESCE(a, b, c)      -- 第一个非 NULL(Oracle: NVL / NVL2)
+NULLIF(a, b)           -- a=b 返回 NULL,否则返回 a
+GREATEST(a,b), LEAST(a,b)
+
+CASE WHEN a > 10 THEN '大' WHEN a > 5 THEN '中' ELSE '小' END
+-- 相当于 Oracle 的 DECODE
+
+5. 聚合函数
+
+count(*), count(distinct col), sum(x), avg(x), min(x), max(x)
+
+string_agg(name, ',')                  -- 把多行拼成串(Oracle: LISTAGG),非常常用
+array_agg(name)                        -- 多行聚合为数组
+json_agg(t)                            -- 多行聚合为 JSON 数组
+bool_and(x), bool_or(x)                -- 是否全部/任一满足
+
+6. 数组与 JSON(比 Oracle 强得多)
+
+-- 数组
+array_agg(col)                        -- 聚合为数组
+unnest(ARRAY[1,2,3])                  -- 数组拆成多行,常和 generate_series 搭配
+array_length(arr, 1), cardinality(arr)
+array_position(arr, 'x')
+ARRAY[1,2,3] @> ARRAY[1]              -- 包含判断
+
+-- JSON
+data->>'name'                         -- 取 JSON 字段为文本
+data->'addr'->>'city'                 -- 嵌套
+jsonb_array_elements(data)            -- JSON 数组拆行(要在 FROM LATERAL 里用)
+jsonb_each(data)                      -- 拆成 key/value
+
+7. 生成系列(没有 Oracle 直接对应,写报表很好用)
+
+SELECT generate_series(1, 10);                       -- 1..10
+SELECT generate_series('2024-01-01'::date, '2024-01-31'::date, '1 day');  -- 每天一行
+
+8. 窗口函数(常用)
+
+SELECT name, dept_id, amount,
+       ROW_NUMBER() OVER (PARTITION BY dept_id ORDER BY amount DESC) AS rn,   -- 组内序号
+       RANK() OVER (ORDER BY amount DESC),
+       LAG(amount)  OVER (ORDER BY created_at),        -- 上一行
+       LEAD(amount) OVER (ORDER BY created_at)         -- 下一行
+FROM orders;
+
+9. 类型转换
+
+CAST(x AS int)     -- 等价 x::int
+'123'::int, '12.5'::numeric, x::text
+to_number('1,234.5', 'FM9,999.9')
+gen_random_uuid()  -- PG13+ 内置,生成 UUID(旧版要 CREATE EXTENSION pgcrypto)
+
+10. 和 Oracle 的快速对照
+
+┌────────────┬───────────────────────────┬─────────────────────────────────────────┐
+│    用途    │          Oracle           │               PostgreSQL                │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 非空默认   │ NVL(a,b) / NVL2           │ COALESCE(a,b)                           │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 条件取值   │ DECODE(a,1,'x',2,'y','z') │ CASE                                    │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 当前时间   │ SYSDATE                   │ now()                                   │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 按天截断   │ TRUNC(SYSDATE)            │ date_trunc('day', now())                │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 加月       │ ADD_MONTHS(d, n)          │ d + interval 'n months'(月末行为略不同) │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 拼多行     │ LISTAGG(...)              │ string_agg(...)                         │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 找子串位置 │ INSTR(s, sub)             │ position(sub IN s) / strpos(s, sub)     │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 拆列       │ SUBSTR + INSTR 拼         │ split_part(s, delim, n)                 │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 行号       │ ROWNUM                    │ LIMIT                                   │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 取前 N 名  │ ROW_NUMBER() OVER(...)    │ 同样有,语法一致                         │
+├────────────┼───────────────────────────┼─────────────────────────────────────────┤
+│ 生成系列   │ 无                        │ generate_series()                       │
+└────────────┴───────────────────────────┴─────────────────────────────────────────┘
+
+提醒:迁移时最常踩的是 to_char 日期格式和 || 遇 NULL。前者格式符要对表查,后者统一用 COALESCE 包列。需要的话,我可以给你整理一份你库里实际用到的 Oracle 函数→PG 的转换清单。
