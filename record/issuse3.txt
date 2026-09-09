@@ -1,0 +1,25 @@
+psql -c "show client_encoding;"
+
+
+读完了。import_all.sh 是 Ora2Pg 18.2 标准生成的，从它能看到几个关键事实，正好帮你把两个方案都定下来。
+
+从脚本里能确认的三件事
+
+1. 你的导入脚本里没有任何"转码"动作。 数据导入就是一句 psql -f data/data.sql（脚本里还有一条直连回退：ora2pg -t COPY --pg_dsn ... --pg_user ...）。所以编码对不对，完全取决于「文件的字节」和「psql 的 client_encoding」是否一致。
+
+2. DB 是 EUC-JP 时，psql 默认 client_encoding = EUC_JP。 这意味着：
+- 文件是 EUC-JP + 不设任何环境变量 → psql 原样写进去，零转换、零报错——这就是方案一最对症的原因；
+- 你现在报 UTF-8 字符 no equivalent，说明你当前环境里 client_encoding 是 UTF8（多半 PGCLIENTENCODING=UTF8 或库连接参数设了 UTF8），PG 被迫做 UTF8→EUC_JP 转换，才把不可映射字符顶出来的。普通表内容恰好都能映射所以"成功"，分割表里有个把字映射不了就炸——两者用的是同一批 UTF-8 文件，这跟你观察到的一致。
+
+3. 方案的可行性差异，脚本里写死了： 直连回退是 -t COPY，而 PostgreSQL 的 COPY FROM 目标不能是视图。分割表在 PG 里已经是 view + INSTEAD OF trigger，所以"ora2pg 直连导分割表"这条路物理上走不通——这正是你最早说"ora2pg 不能动态导入"的原因，方案二对分割表不成立，只能走"文件 → psql"。
+
+所以正确的做法收敛成一条路
+
+① 源头：ora2pg.conf 改编码并重导
+OUTPUT_ENCODING   EUC-JP
+导出的数据文件/分割表文件就直接是 EUC-JP。导出时 NLS_LANG 也要与 Oracle 库一致（export NLS_LANG=JAPANESE_JAPAN.JA16EUC），否则读 Oracle 那一侧先出问题。
+
+② 导入：别再用 UTF8 客户端
+unset PGCLIENTENCODING        # 或 export PGCLIENTENCODING=EUC_JP
+psql -h <pg> -U <owner> -d <db> -f data/data.sql
+文件是 EUC-JP、client_encoding 是 EUC-JP、库是 EUC-JP，三者一致 → 无转换，就不 all.sh 可以照用（-f 跳过建库动作、用 -e 那套不需要）。
