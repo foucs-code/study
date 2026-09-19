@@ -103,3 +103,74 @@ unset PGPASSWORD
 echo "=========================================="
 echo "恭喜！数据库初始化及 DDL 导入全部完成！"
 echo "=========================================="
+
+
+
+
+针对 Oracle 迁移到 PostgreSQL 过程中遇到的“无主键表”和“表被拆分”这两大经典数据校验难题，传统的基于主键比对的工具（如 Ora2Pg 自带的校验）确实无能为力。
+
+针对这两种特殊情况，推荐使用以下成熟的解决方案和变通策略：
+
+一、 针对“无主键表”的校验方法
+当表没有主键时，无法通过 PRIMARY KEY 匹配行。核心解决思路是“全行内容哈希化（Row-level Hash）”或“引入临时行号”。
+
+方法 1：全字段 MD5/SHA256 哈希比对（最推荐）
+将每一行的所有列拼接成一个字符串，计算其哈希值（MD5），然后比对两边哈希值的集合是否一致。
+
+Oracle 端查询示例：
+
+SQL
+-- 将各列用分隔符拼接后取 MD5
+SELECT MD5(TO_CLOB(NVL(col1, 'NULL') || '|' || NVL(TO_CHAR(col2), 'NULL') || '|' || ...)) as row_hash
+FROM source_table;
+PostgreSQL 端查询示例：
+
+SQL
+-- 使用 row_to_json 或 string_agg 将整行转为文本并取 md5
+SELECT md5(row_to_json(t)::text) as row_hash
+FROM target_table t;
+比对方式：将两边导出的哈希值列表导入到文件或临时表中，使用 comm、diff 或 SQL 的 EXCEPT 找出差异。
+
+方法 2：基于临时序号（Row Number）的比对
+如果表的数据量不是极大，且在导出期间表数据是静态的（无并发写入）：
+
+在 Oracle 和 PostgreSQL 中分别通过分析函数 ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) 生成一个确定性的临时行号。
+
+将行号作为“虚拟主键”，按批次拉取进行字段逐一比对。
+
+二、 针对“迁移后被分割的表”的校验方法
+如果 Oracle 的一张大表在 PG 中被拆分成了多张表（例如按时间分区、按业务维度拆分，或分库分表），校验时需要将 PG 侧的数据“在逻辑上还原”。
+
+方法 1：在 PostgreSQL 中创建“还原视图”（推荐）
+在 PostgreSQL 中建立一个视图（View），通过 UNION ALL 或 JOIN 把被分割的表重新拼回原 Oracle 表的结构。
+
+操作步骤：
+
+在 PG 中创建视图：
+
+SQL
+CREATE OR REPLACE VIEW v_merged_original_table AS
+SELECT * FROM table_part_2025
+UNION ALL
+SELECT * FROM table_part_2026;
+之后，将这个视图 v_merged_original_table 直接当作一张完整的表，与 Oracle 的原表进行行数、聚合指标或上述的哈希比对。
+
+方法 2：聚合指标分组合并校验（适合超大表）
+如果数据量太大无法整体拼接，可以对比分组统计指标：
+
+Oracle 端：按某个公共维度（如日期、状态、业务类型）统计 COUNT(*) 和关键数值列的 SUM()。
+
+PG 端：对所有拆分表的数据进行相同的聚合统计，并将结果汇总。
+
+比对内容：核对各个分组的 COUNT 和 SUM 是否完全一致。
+
+三、 生产环境常用校验工具推荐
+如果不想手写复杂的 SQL 脚本，可以借助以下两款专门处理复杂异构数据库校验的开源/成熟工具：
+
+DataChecker / DataX-Cert：支持异构数据库（Oracle vs PG）的抽样对比和全量/增量对账，支持自定义无主键表的联合键或全字段校验。
+
+Python 自研校验脚本（Pandas）：
+
+用 Python 分页读取 Oracle 和 PG 数据。
+
+利用 pandas.merge() 或 pd.concat() 在内存中处理拆分表的合并，并使用 df.equals() 或多列差集快速找出不一致的数据行。
