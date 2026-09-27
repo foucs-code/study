@@ -174,3 +174,658 @@ Python 自研校验脚本（Pandas）：
 用 Python 分页读取 Oracle 和 PG 数据。
 
 利用 pandas.merge() 或 pd.concat() 在内存中处理拆分表的合并，并使用 df.equals() 或多列差集快速找出不一致的数据行。
+
+
+
+
+PostgreSQL 常用语句，按场景整理了一份：
+数据库 & 表管理
+-- 连接数据库
+psql -U username -d dbname -h host -p port
+
+-- 创建/删除数据库
+CREATE DATABASE dbname;
+DROP DATABASE dbname;
+
+-- 列出所有数据库
+\l
+
+-- 切换到数据库
+\c dbname
+
+-- 列出所有表
+\dt
+
+-- 查看表结构
+\d tablename
+
+-- 创建表
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 删除表
+DROP TABLE IF EXISTS tablename;
+
+-- 清空表（重置自增序列）
+TRUNCATE TABLE tablename RESTART IDENTITY;
+增删改查
+-- 插入
+INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com');
+INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com'), ('Carol', 'carol@example.com');
+
+-- 查询
+SELECT * FROM users;
+SELECT id, name FROM users WHERE name LIKE 'A%' ORDER BY created_at DESC LIMIT 10;
+
+-- 更新
+UPDATE users SET email = 'new@example.com' WHERE id = 1;
+
+-- 删除
+DELETE FROM users WHERE id = 1;
+聚合 & 分组
+SELECT department, COUNT(*), AVG(salary), MAX(salary), MIN(salary)
+FROM employees
+GROUP BY department
+HAVING COUNT(*) > 5
+ORDER BY AVG(salary) DESC;
+连接
+-- INNER / LEFT / RIGHT / FULL JOIN
+SELECT u.name, o.order_id, o.amount
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE o.amount IS NULL;  -- 没下过单的用户
+索引
+CREATE INDEX idx_users_email ON users(email);
+CREATE UNIQUE INDEX idx_users_email_unique ON users(email);
+CREATE INDEX idx_users_name_created ON users(name, created_at);
+
+-- 查看索引
+\di
+
+-- 删除索引
+DROP INDEX idx_users_email;
+进阶查询
+-- 分页
+SELECT * FROM users ORDER BY id LIMIT 20 OFFSET 40;
+
+-- 去重
+SELECT DISTINCT department FROM employees;
+
+-- 子查询
+SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 100);
+
+-- CTE (公用表表达式)
+WITH recent_orders AS (
+    SELECT user_id, SUM(amount) AS total
+    FROM orders
+    WHERE created_at >= NOW() - INTERVAL '30 days'
+    GROUP BY user_id
+)
+SELECT u.name, COALESCE(r.total, 0) AS total_30d
+FROM users u
+LEFT JOIN recent_orders r ON u.id = r.user_id;
+窗口函数
+SELECT name, department, salary,
+       RANK() OVER (PARTITION BY department ORDER BY salary DESC) AS rank,
+       ROW_NUMBER() OVER (ORDER BY salary DESC) AS row_num,
+       LAG(salary) OVER (PARTITION BY department ORDER BY salary) AS prev_salary,
+       AVG(salary) OVER (PARTITION BY department) AS dept_avg
+FROM employees;
+事务
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;
+-- 或 ROLLBACK;
+常用函数
+-- 时间
+NOW(), CURRENT_DATE, AGE(timestamp, timestamp),
+DATE_TRUNC('month', created_at), EXTRACT(YEAR FROM created_at)
+
+-- 字符串
+LENGTH(), UPPER(), LOWER(), TRIM(), CONCAT(a, b),
+SUBSTRING('hello' FROM 2 FOR 3), REPLACE(str, old, new)
+
+-- 类型转换
+'123'::INTEGER, CAST('2024-01-01' AS DATE)
+
+-- 条件
+COALESCE(col, 'default'), NULLIF(a, b),
+CASE WHEN condition THEN result ELSE default END
+
+-- JSON / JSONB
+data->'key', data->>'key', data#>'{path,to,key}',
+jsonb_array_elements(data->'items')
+实用管理命令（psql 内）
+\dt          -- 列出表
+\di          -- 列出索引
+\dv          -- 列出视图
+\df          -- 列出函数
+\x           -- 扩展显示（行转列）
+\timing      -- 显示执行时间
+\o file.sql  -- 将输出写入文件
+\i file.sql  -- 执行 SQL 文件
+性能分析
+EXPLAIN SELECT * FROM users WHERE email = '...';
+EXPLAIN ANALYZE SELECT * FROM users WHERE email = '...';
+
+-- 查看慢查询（需要 pg_stat_statements 扩展）
+SELECT query, calls, total_time, rows
+FROM pg_stat_statements
+ORDER BY total_time DESC LIMIT 10;
+如果有想深入展开的方向（比如窗口函数、JSONB 操作、索引策略、备份恢复），可以继续聊。
+
+20:45
+
+postgres=#CREATE USER huyi WITH PASSWORD 'huyi'
+postgres=#CREATE DATABASE huyidb OWNER huyi; 
+postgres=#GRANT ALL PRIVILEGES ON DATABASE huyidb TO huyi; 
+
+postgres=#CREATE DATABASE huyidb2 OWNER huyi; 
+postgres=#GRANT ALL PRIVILEGES ON DATABASE huyidb2 TO huyi; 
+
+postgres=# \l
+
+
+psql  -h 127.0.0.1 -U huyi -d huyidb
+
+huyidb=> create table t1(a int);
+
+huyidb=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ public | t1   | table | huyi
+(1 row)
+
+
+# 创建和用户同名的huyi
+huyidb=>  create schema huyi;
+CREATE SCHEMA
+huyidb=> create table t2(a int);
+CREATE TABLE
+
+huyidb=> \dt 
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ huyi   | t2   | table | huyi
+ public | t1   | table | huyi
+(2 rows)
+
+huyidb=> show search_path;
+   search_path   
+-----------------
+ "$user", public
+(1 row)
+
+# 创建新的schem 的huyisc , 我们发现我们的schema owner 默认是我们的username 
+
+huyidb=> \dn
+  List of schemas
+  Name  |  Owner   
+--------+----------
+ huyi   | huyi
+ huyisc | huyi
+ public | postgres
+(3 rows)
+
+# 设置search_path
+set search_path = 'huyisc',"$user",public;
+huyidb=> show search_path ;
+       search_path       
+-------------------------
+ huyisc, "$user", public
+(1 row)
+
+# 创建T3表 指定huyisc
+huyidb=>  create table huyisc.t3(a int);
+CREATE TABLE
+huyidb=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ huyi   | t2   | table | huyi
+ huyisc | t3   | table | huyi
+ public | t1   | table | huyi
+(3 rows)
+2.2测试用户2
+# 新创建用户huyi2,新把huyidb2授权给 huyi2  ； 即huyidb2 同时授权给huyi，huyi2 两个用户
+
+postgres=#   CREATE USER huyi2 WITH PASSWORD 'huyi2' ;
+CREATE ROLE
+postgres=# 
+postgres=#  GRANT ALL PRIVILEGES ON DATABASE huyidb2 TO huyi2; 
+GRANT
+
+postgres=# \l
+                                List of databases
+   Name    |  Owner   | Encoding | Collate | Ctype |      Access privileges       
+-----------+----------+----------+---------+-------+------------------------------
+ huyidb    | huyi     | UTF8     | C       | C     | =Tc/huyi                    +
+           |          |          |         |       | huyi=CTc/huyi
+ huyidb2   | huyi     | UTF8     | C       | C     | =Tc/huyi                    +
+           |          |          |         |       | huyi=CTc/huyi               +
+           |          |          |         |       | huyi2=CTc/huyi
+
+
+
+# 以huyi2 用户在huyidb2 中创建 schema  testsc 指定owner 为 huyi
+postgres=# GRANT "huyi" to huyi2;
+GRANT ROLE
+
+psql  -h 127.0.0.1 -U huyi2 -d huyidb2
+
+huyidb2=> create schema testsc AUTHORIZATION huyi ; 
+CREATE SCHEMA
+
+huyidb2=> \dn 
+  List of schemas
+  Name  |  Owner   
+--------+----------
+ public | postgres
+ testsc | huyi
+(2 rows)
+
+
+set search_path = 'testsc',"$user",public;
+
+# 创建T4表指定testsc 
+
+huyidb2=>  create table testsc.t4(a int);
+CREATE TABLE
+huyidb2=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ testsc | t4   | table | huyi2
+(1 row)
+
+# 这时虽然Schema 的Owner 是 huyi  ,但table 的owner 还是huyi2 所以用huyi是查不到t4 数据库的
+psql  -h 127.0.0.1 -U huyi  -d huyi2
+huyidb2=>  select * from testsc.t4;
+ERROR:  permission denied for table t4
+
+# 更改t4表的owner 到huyi 后可以查询 
+psql  -h 127.0.0.1 -U huyi2  -d huyi2
+huyidb2=>  alter table testsc.t4 OWNER TO huyi ;
+ALTER TABLE
+huyidb2=> \dt
+       List of relations
+ Schema | Name | Type  | Owner 
+--------+------+-------+-------
+ testsc | t4   | table | huyi
+(1 row)
+
+huyidb2=> 
+
+#在次以huyi 用户登录查询  
+psql  -h 127.0.0.1 -U huyi  -d huyi2
+huyidb2=>  select * from testsc.t4;
+ a 
+---
+(0 rows)
+
+#现在用huyi 还是huyi2用户 都可查询 ，
+#huyi 用户
+huyidb2=> select * from testsc.t4;
+ a 
+---
+(0 rows)
+
+
+#huyi2 用户
+huyidb2=> select * from testsc.t4;
+ a 
+---
+(0 rows)
+
+#因为huyidb库里面 ，huyi2 里有 huyi信息的Member  ;
+huyidb2=> \du 
+                                            List of roles
+    Role name    |                         Attributes                         |       Member of       
+-----------------+------------------------------------------------------------+-----------------------
+ huyi            |                                                            | {}
+ huyi2           |                                                            | {huyi}
+
+
+select current_schemas(true);
+
+#当 回收huyi2用户里的 huyi的member 信息时，就没有权限
+postgres@s2ahumysqlpg01->    psql  -h 127.0.0.1
+psql (12.4)
+Type "help" for help.
+
+postgres=# revoke  "huyi" from huyi2;
+REVOKE ROLE
+postgres=# quit
+postgres@s2ahumysqlpg01-> psql  -h 127.0.0.1 -U huyi2 -d huyidb2
+psql (12.4)
+Type "help" for help.
+
+huyidb2=> select * from testsc.t4;
+ERROR:  permission denied for schema testsc
+
+
+
+#这里要用同时授权这2个权限， huyi2步可以又访问t4这张表了
+grant USAGE on SCHEMA testsc to huyi2 ;
+
+grant SELECT on testsc.t4 to huyi2 ;
+
+
+
+postgres@s2ahumysqlpg01-> psql  -h 127.0.0.1 -U huyi2 -d huyidb2
+psql (12.4)
+Type "help" for help.
+
+huyidb2=> select * from testsc.t4;
+ a 
+---
+(0 rows)
+2.3 补充
+select current_database();  --当前db 或直接 \c
+select current_user;        ---查看当前用户  \ 或 select user;  
+
+pg_catalog存放了各系统表,内置函数等等,它总是在搜索路径中,需要通过current_schemas看到
+
+select current_schemas(true);
+show  search_path ; 
+
+在 PostgreSQL 的 psql 命令行工具中，所有以 \ 开头的都是元命令（Meta-Commands），用于查看和管理数据库对象。以下是常用命令总结：
+
+👤 用户与权限管理
+命令	作用
+\du	列出所有数据库用户（角色）及其属性
+\du+	更详细地列出用户信息（包含描述）
+\dg	同 \du，列出所有角色
+\drds	显示每个数据库的角色设置
+\dp 或 \z	显示表的权限分配情况
+🗄️ 数据库与表对象查看
+命令	作用
+\l	列出所有数据库
+\l+	更详细地列出数据库（包含大小、描述）
+\c <数据库名>	切换到指定数据库
+\dt	列出当前数据库中所有表
+\dt+	更详细地列出表（包含大小、描述）
+\dt *.*	列出所有模式下的所有表
+\dt testsc.*	列出 testsc 模式下的所有表
+\d	列出当前数据库的所有对象（表、视图、序列等）
+\d <表名>	查看指定表的结构（字段、类型、约束）
+\d+ <表名>	更详细地查看表结构（包含存储信息）
+\di	列出所有索引
+\dv	列出所有视图
+\ds	列出所有序列
+\df	列出所有函数
+\df+	更详细地列出函数（包含源代码）
+🧩 模式（Schema）管理
+命令	作用
+\dn	列出所有模式
+\dn+	更详细地列出模式（包含描述）
+\dx	列出所有已安装的扩展（Extensions）
+📊 查询与执行相关
+命令	作用
+\g	重复执行上一条 SQL 命令
+\g <文件名>	将上一条 SQL 的执行结果输出到文件
+\x	切换扩展显示模式（按列显示，便于查看宽表）
+\x on / \x off	开启/关闭扩展显示模式
+\timing	切换 SQL 执行时间显示（显示每条 SQL 耗时）
+\o <文件名>	将后续所有查询结果输出到文件
+\o	恢复输出到终端
+🛠️ 系统信息与配置
+命令	作用
+\conninfo	显示当前连接信息（数据库、用户、端口）
+\encoding	显示当前客户端编码
+\version	显示 PostgreSQL 版本信息
+\show	显示运行时配置参数（如 \show search_path）
+\set	显示或设置 psql 变量
+\unset	取消设置 psql 变量
+📁 文件与外部操作
+命令	作用
+\i <文件名>	执行 SQL 文件（导入）
+\ir <文件名>	执行 SQL 文件（相对于当前目录）
+\o <文件名>	将输出重定向到文件
+\copy	执行导入/导出数据操作（比 COPY 更灵活）
+\! <系统命令>	执行系统 shell 命令（如 \! ls）
+🧹 历史与帮助
+命令	作用
+\h 或 \help	查看 SQL 命令帮助
+\h <SQL命令>	查看特定 SQL 命令的帮助（如 \h SELECT）
+\?	列出所有元命令的帮助
+\s	显示命令历史
+\s <文件名>	将命令历史保存到文件
+\q	退出 psql
+🎨 显示格式控制
+命令	作用
+\pset format <格式>	设置输出格式（如 aligned、csv、html、latex 等）
+\pset border <值>	设置表格边框样式
+\a	切换非对齐模式
+\H	切换 HTML 输出模式
+\t	切换只显示数据（不显示列名和行数）
+💡 实用组合技巧
+组合命令	作用
+\l+	查看所有数据库及大小
+\dt+	查看所有表及大小
+\d+ 表名	查看表结构、索引、约束等完整信息
+\x \dt	扩展显示模式下查看表列表（便于横向阅读）
+\du+	查看用户详细权限信息
+📝 总结
+这些元命令的核心用途：
+
+\du → 查看用户权限（你问过的）
+
+\dt → 查看表（当 \d 显示 "Did not find any relations" 时，用这个指定查看表）
+
+\dn → 查看模式（确认表在哪个模式下）
+
+\l → 查看数据库（确认当前在哪个库）
+
+\c → 切换数据库（解决连接错库的问题）
+
+如果你在执行某个命令时遇到了问题，可以告诉我具体场景，我帮你选最合适的命令。😊
+
+
+------------------------------------------###########------------------------------------------------------------------------------------
+
+从 Oracle 转向 PostgreSQL（简称 PG）时，你会发现大部分对象概念是相通的，但在底层实现和语法上有很大的不同。特别需要注意的是：PostgreSQL 原生没有类似 Oracle 的 PACKAGE（程序包）、DBLINK（直接作为对象创建）和 DIRECTORY 对象的语法，但 PG 提供了功能相同或更优雅的替代方案（如 Schema、FDW 等）。
+
+同样为你分为 4 大类，带你看看 PostgreSQL 版本的实现：
+
+一、 数据存储核心（Core Data Storage）
+1. TABLE (表)
+含义：结构化数据存储的核心单元。与 Oracle 不同的是，PG 支持更丰富的原生数据类型（如 JSONB、数组、UUID 等）。
+
+例子：创建一个员工表，其中 emp_id 使用自增类型。
+
+SQL
+CREATE TABLE employees (
+    emp_id SERIAL PRIMARY KEY, -- SERIAL 会自动创建序列并绑定
+    emp_name VARCHAR(50),
+    salary NUMERIC(10, 2)
+);
+2. SEQUENCE (序列)
+含义：自动递增的数字生成器。在 PG 中，除了用 SERIAL 隐式创建外，也可以显式创建。
+
+例子：创建一个从 1001 开始的序列。
+
+SQL
+CREATE SEQUENCE emp_seq START WITH 1001;
+
+-- 使用时通过 nextval() 函数获取：
+-- INSERT INTO employees VALUES (nextval('emp_seq'), '张三', 5000);
+3. TYPE (类型)
+含义：PG 的自定义类型非常强大。最常用的是复合类型（Composite Type，类似结构体）和枚举类型（ENUM）。
+
+例子：创建一个代表周几的枚举类型。
+
+SQL
+CREATE TYPE week_day AS ENUM ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday');
+
+-- 之后可以作为表的字段类型：CREATE TABLE t (day_off week_day);
+二、 逻辑视图与安全访问（Logical Views & Security）
+4. VIEW (视图)
+含义：虚拟表，保存一段查询 SQL。PG 的视图同样不占用物理存储空间。
+
+例子：创建一个只看高薪员工的视图。
+
+SQL
+CREATE VIEW high_salary_emp AS
+SELECT emp_id, emp_name 
+FROM employees 
+WHERE salary > 8000;
+5. MVIEW / Materialized View (物化视图)
+含义：将查询结果物理存储在磁盘上的视图。刷新时，PG 提供了 CONCURRENTLY 参数，允许在不阻塞查询的情况下进行并发刷新（需要有唯一索引）。
+
+例子：创建并刷新一个物化视图。
+
+SQL
+CREATE MATERIALIZED VIEW dept_salary_mv AS 
+SELECT emp_name, SUM(salary) AS total_sal FROM employees GROUP BY emp_name;
+
+-- 刷新物化视图：REFRESH MATERIALIZED VIEW dept_salary_mv;
+6. SYNONYM (同义词 —— PG无原生对象，用视图/Search Path替代)
+含义：PostgreSQL 官方原生不支持 CREATE SYNONYM 语法。PG 通常通过配置 search_path（模式搜索路径）或者直接创建一个简单的 VIEW 来实现别名功能。
+
+例子：用视图代替同义词。
+
+SQL
+-- 模拟 Oracle 的别名功能
+CREATE VIEW emp AS SELECT * FROM employees;
+7. DBLINK (远程连接 —— PG中为扩展模块或 FDW)
+含义：跨库查询。在 PG 中，dblink 是一个官方自带的扩展模块，更现代、更推荐的做法是使用 FDW（外部数据包装器，Foreign Data Wrapper）。
+
+例子：使用 PG 自带的 dblink 扩展进行跨库查询。
+
+SQL
+-- 1. 首先需要安装扩展
+CREATE EXTENSION dblink;
+
+-- 2. 直接在查询中连接远程库
+SELECT * FROM dblink('host=192.168.1.100 dbname=remote_db user=res_user password=pwd',
+                     'SELECT emp_id, emp_name FROM employees')
+AS remote_data(emp_id INT, emp_name VARCHAR);
+8. GRANT (授权)
+含义：将表、视图、序列等对象的权限授予指定的用户或角色。
+
+例子：把 employees 表的只读权限赋给用户 tom。
+
+SQL
+GRANT SELECT ON TABLE employees TO tom;
+三、 存储过程与业务逻辑（PL/pgSQL Code）
+9. PACKAGE (程序包 —— PG无原生对象，用 Schema 替代)
+含义：PostgreSQL 没有 Oracle 的 PACKAGE 对象。在 PG 中，通常利用 Schema（模式） 来实现类似包的命名空间隔离，将相关的函数、存储过程放到同一个 Schema 下。
+
+例子：用 Schema 模拟包的分组。
+
+SQL
+CREATE SCHEMA emp_mgmt_pkg;
+
+-- 在该 Schema 下创建函数，调用时通过 emp_mgmt_pkg.get_monthly_sal()
+CREATE FUNCTION emp_mgmt_pkg.get_monthly_sal(ann_sal NUMERIC) ...
+10. FUNCTION (函数)
+含义：执行特定逻辑并必须返回值。PG 的旧版本（11以前）只有函数，函数内部默认不能直接执行 COMMIT/ROLLBACK（除非用特殊方式）。
+
+例子：创建一个计算月薪的函数（使用 PL/pgSQL 语言）。
+
+SQL
+CREATE OR REPLACE FUNCTION get_monthly_sal (ann_sal NUMERIC) 
+RETURNS NUMERIC AS $$
+BEGIN
+    RETURN ann_sal / 12.0;
+END;
+$$ LANGUAGE plpgsql;
+11. PROCEDURE (存储过程)
+含义：PG 从 11 版本开始正式引入 PROCEDURE。与函数不同，存储过程没有返回值，并且支持在内部使用 COMMIT 和 ROLLBACK 进行事务控制。
+
+例子：更新薪资并提交事务的存储过程。
+
+SQL
+CREATE OR REPLACE PROCEDURE update_sal (p_id INT, p_sal NUMERIC) AS $$
+BEGIN
+    UPDATE employees SET salary = p_sal WHERE emp_id = p_id;
+    COMMIT; -- 支持事务提交
+END;
+$$ LANGUAGE plpgsql;
+
+-- 调用方法：CALL update_sal(1, 6000);
+12. TRIGGER (触发器)
+含义：事件驱动的自动执行程序。在 PG 中，定义触发器分两步：先写一个返回类型为 TRIGGER 的触发器函数，再创建触发器本身与表绑定。
+
+例子：
+
+SQL
+-- 1. 定义触发器函数
+CREATE OR REPLACE FUNCTION log_emp_insert() RETURNS TRIGGER AS $$
+BEGIN
+    RAISE NOTICE '准备插入新员工: %', NEW.emp_name;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2. 创建触发器绑定到表
+CREATE TRIGGER trg_before_emp_ins
+BEFORE INSERT ON employees
+FOR EACH ROW EXECUTE FUNCTION log_emp_insert();
+四、 物理存储与系统管理（Physical & Infrastructure）
+13. TABLESPACE (表空间)
+含义：定义在文件系统中的一个目录，用来指定 PG 数据库在磁盘上存储物理文件的实际位置。
+
+例子：创建一个表空间指向服务器的某个挂载盘目录（该目录必须为空且 pg 账号有读写权限）。
+
+SQL
+CREATE TABLESPACE tbs_data LOCATION '/mnt/ssd_disk/pg_data';
+
+-- 创建表时指定表空间：CREATE TABLE t (...) TABLESPACE tbs_data;
+14. PARTITION (分区)
+含义：PG 从 10 版本开始引入了声明式分区（Declarative Partitioning）。将一张大表按照某种规则，物理上拆分为多个分区子表。
+
+例子：按范围（RANGE）创建订单分区主表和子表。
+
+SQL
+-- 创建主表（不存实际数据）
+CREATE TABLE sales (
+    sale_id INT,
+    sale_date DATE NOT NULL,
+    amount NUMERIC
+) PARTITION BY RANGE (sale_date);
+
+-- 创建真实存储数据的分区子表
+CREATE TABLE sales_2025 PARTITION OF sales
+    FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');
+15. DIRECTORY (目录 —— PG无原生对象，用系统命令/扩展替代)
+含义：PostgreSQL 没有像 Oracle 那样的 CREATE DIRECTORY 对象。PG 在读写服务器本地文件时（如 COPY 命令或 adminpack 扩展），直接在 SQL 语句中指定服务器的绝对路径。
+
+例子：在 PG 中直接利用服务器路径导出数据。
+
+SQL
+-- PG 不需要建目录对象，直接由超级用户指定绝对路径
+COPY employees TO '/var/lib/postgresql/data/emp_export.csv' WITH CSV HEADER;
+
+
+方案 1：使用 EXPLAIN ANALYZE 诊断死结/卡死点（第一步）
+不要盲目改 SQL，先看 Postgres 到底卡在哪一步：
+
+SQL
+EXPLAIN ANALYZE 
+YOUR_VIEW_SELECT_QUERY;
+观察点：
+
+看执行计划中显示的是 Seq Scan（全表扫描 1700 万行） 还是 Index Scan。
+
+看具体是哪一个表或哪一个 Join 节点耗时最长、返回的实际行数（actual rows）和预估行数（rows）是否偏差巨大。
+
+
+SQL
+-- 优化思路：先把大表中能过滤出少量数据的子集通过 CTE 隔离出来，再做 Join
+WITH filtered_a AS (
+    SELECT id, col1 FROM a WHERE created_at > '2026-01-01' -- 尽早过滤减少数据量
+)
+SELECT * 
+FROM filtered_a
+JOIN b ON filtered_a.id = b.a_id
+JOIN c ON b.id = c.b_id;
+在 PostgreSQL 中，适当地使用 WITH（CTE）有时可以作为一个“优化器栅栏”（Optimizer Barrier），强制 Postgres 先执行这一步的过滤，从而避免 1700 万全表数据直接参与大循环。（注：PG 12 以后 CTE 默认可能会被内联，如果需要强制隔离，可以使用 WITH ... NOT MATERIALIZED 或根据 PG 版本调整）。
