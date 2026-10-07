@@ -1,0 +1,115 @@
+--1.定义单行数据的对象类型
+create or replace TYPE row_hash_rec as object (
+    row_hash varchar2(128),
+    duplicate_count number
+);
+/
+--2.定义该对象的列表(集合)类型
+create or replace type row_hash_tbl as table of row_hash_rec;
+/
+
+-- 函数创建
+CREATE OR REPLACE FUNCTION get_table_hash_result(
+    p_owner      IN VARCHAR2,
+    p_table_name IN VARCHAR2
+) RETURN row_hash_tbl pipelined IS
+    v_expr     VARCHAR2(4000);
+    v_full_sql VARCHAR2(4000);
+    v_owner    VARCHAR2(128) := UPPER(p_owner);
+    v_table    VARCHAR2(128) := UPPER(p_table_name);
+
+    TYPE t_cursor is ref cursor;
+    v_cursor t_cursor;
+    v_hash varchar2(128);
+    v_count number;
+BEGIN
+    -- 1. 动态拼凑该表所有列的转换表达式（严格对齐 Postgres 规则）
+    SELECT LISTAGG(
+                   CASE
+                       WHEN DATA_TYPE IN ('NUMBER', 'FLOAT')
+                           THEN 'NVL(TRIM(TO_CHAR(' || COLUMN_NAME || ')), ''-'')'
+                       WHEN DATA_TYPE LIKE '%DATE%' OR DATA_TYPE LIKE '%TIMESTAMP%'
+                           THEN 'NVL(TO_CHAR(' || COLUMN_NAME || ', ''YYYY-MM-DD HH24:MI:SS''), ''-'')'
+                       WHEN DATA_TYPE LIKE 'INTERVAL%'
+                           THEN 'NVL(TO_CHAR(CAST(' || COLUMN_NAME || ' AS INTERVAL DAY TO SECOND)), ''-'')'
+                       WHEN DATA_TYPE = 'RAW'
+                           THEN 'NVL(RAWTEXT(' || COLUMN_NAME || '), ''-'')'
+                       WHEN DATA_TYPE IN ('CLOB', 'NCLOB')
+                           THEN 'NVL(DBMS_LOB.SUBSTR(' || COLUMN_NAME || ', 4000, 1), ''-'')'
+                       ELSE
+                           'NVL(TO_CHAR(' || COLUMN_NAME || '), ''-'')'
+                       END,
+                   ' || ''|'' || '
+           ) WITHIN GROUP (ORDER BY COLUMN_ID) INTO v_expr
+    FROM ALL_TAB_COLS
+    WHERE OWNER = v_owner
+      AND TABLE_NAME = v_table
+      AND HIDDEN_COLUMN = 'NO';
+
+    IF v_expr IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20001, 'Table not found or has no columns.');
+    END IF;
+
+    -- 2. 组装最终 SQL
+    v_full_sql := 'SELECT STANDARD_HASH(' || v_expr || ', ''MD5'') AS row_hash, COUNT(*) AS duplicate_count ' ||
+                  'FROM ' || v_owner || '.' || v_table || ' ' ||
+                  'GROUP BY STANDARD_HASH(' || v_expr || ', ''MD5'')' ||
+                  'ORDER BY row_hash';
+    -- 3. 用 EXECUTE IMMEDIATE ... BULK COLLECT INTO 一次性把数据装入列表
+    open v_cursor for v_full_sql;
+    loop
+        fetch v_cursor into v_hash,v_count;
+        exit when v_cursor%notfound;
+        pipe row(row_hash_rec(v_hash,v_count));
+    end loop;
+    close v_cursor;
+    return;
+END;
+/
+
+select * from table(get_table_hash_result('OMS','CUSTOMER'));
+
+
+-- oracle函数执行
+DECLARE
+    v_res       SYS_REFCURSOR;
+    v_hash      VARCHAR2(128);
+    v_count     NUMBER;
+BEGIN
+    -- 【请把 '你的用户名' 和 '你的表名' 替换成实际的大写名称】
+    v_res := get_table_hash_result('OMS', 'CUSTOMER');
+
+    DBMS_OUTPUT.PUT_LINE(RPAD('ROW_HASH (MD5)', 40) || 'DUPLICATE_COUNT');
+    DBMS_OUTPUT.PUT_LINE('---------------------------------------------------------');
+
+    -- 循环抓取并打印动态生成的哈希结果
+    LOOP
+        FETCH v_res INTO v_hash, v_count;
+        EXIT WHEN v_res%NOTFOUND;
+
+        DBMS_OUTPUT.PUT_LINE(RPAD(v_hash, 40) || v_count);
+    END LOOP;
+
+    CLOSE v_res;
+END;
+/
+
+SELECT
+    NVL(TRIM(TO_CHAR(PRODUCT_ID)), '-') || '|' ||
+    NVL(TO_CHAR(PRODUCT_NAME), '-') || '|' ||
+    NVL(TRIM(TO_CHAR(PRICE)), '-') || '|' ||
+    NVL(TRIM(TO_CHAR(STOCK_QTY)), '-') || '|' ||
+    NVL(TO_CHAR(CREATE_DATE, 'YYYY-MM-DD HH24:MI:SS'), '-') AS oracle_str,
+    STANDARD_HASH(
+            NVL(TRIM(TO_CHAR(PRODUCT_ID)), '-') || '|' ||
+            NVL(TO_CHAR(PRODUCT_NAME), '-') || '|' ||
+            NVL(TRIM(TO_CHAR(PRICE)), '-') || '|' ||
+            NVL(TRIM(TO_CHAR(STOCK_QTY)), '-') || '|' ||
+            NVL(TO_CHAR(CREATE_DATE, 'YYYY-MM-DD HH24:MI:SS'), '-'),
+            'MD5'
+    ) AS oracle_md5
+FROM PRODUCT;
+
+
+INSERT INTO PRODUCT (PRODUCT_ID, PRODUCT_NAME, PRICE, STOCK_QTY, CREATE_DATE)
+VALUES (SEQ_PRODUCT.NEXTVAL, 'android手机', 5888.80, 50, SYSDATE);

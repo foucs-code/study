@@ -1,0 +1,83 @@
+-- postgresql 函数
+CREATE OR REPLACE FUNCTION get_table_hash_result(p_schema_name text, p_table_name text)
+    RETURNS TABLE (row_hash text, duplicate_count bigint) AS $$
+DECLARE
+    v_expr text;
+    v_full_sql text;
+BEGIN
+    -- 1. 动态拼凑该表所有列的转换表达式（同前）
+    SELECT string_agg(
+                   CASE
+                       WHEN data_type IN ('integer', 'bigint', 'numeric', 'decimal', 'real', 'double precision', 'smallint')
+                           -- 严格对齐 Oracle 的 TRIM(TO_CHAR(...))，用 FM 格式化去除正数前导空格
+                           THEN 'COALESCE(trim_scale(' || quote_ident(column_name) || '::numeric)::text, ''-'')'
+                       WHEN data_type LIKE '%date%' OR data_type LIKE '%timestamp%'
+                           THEN 'COALESCE(to_char(' || quote_ident(column_name) || ', ''YYYY-MM-DD HH24:MI:SS''), ''-'')'
+                       -- 3. 时间间隔类型 (Interval)
+                       WHEN data_type LIKE '%interval%'
+                           THEN 'COALESCE(' || quote_ident(column_name) || '::text, ''-'')'
+                       -- 4. 二进制/字节类型 (bytea 对应 Oracle 的 RAW)
+                       -- ⚠️ 关键点：Oracle 的 RAWTEXT 是大写，Postgres 的 encode 默认小写，必须套 UPPER()！
+                       WHEN data_type = 'bytea'
+                           THEN 'COALESCE(UPPER(encode(' || quote_ident(column_name) || ', ''hex'')), ''-'')'
+                       -- 5. 大文本对象 (text 对应 Oracle 的 CLOB / NCLOB)
+                       -- ⚠️ 关键点：严格对齐 Oracle 的 DBMS_LOB.SUBSTR 前 4000 字符限制
+                       WHEN data_type IN ('text', 'json', 'jsonb', 'xml')
+                           THEN 'COALESCE(left(' || quote_ident(column_name) || '::text, 4000), ''-'')'
+                       -- 6. 其他常规字符类型 (varchar, char 等)
+                       ELSE
+                           'COALESCE(' || quote_ident(column_name) || '::text, ''-'')'
+                       END,
+                   ' || ''|'' || ' -- 保持此分隔符，用于在动态 SQL 中生成 || '|' ||
+                   ORDER BY ordinal_position
+           ) INTO v_expr
+    FROM information_schema.columns
+    WHERE table_schema = p_schema_name
+      AND table_name = p_table_name;
+
+    RAISE NOTICE 'table: %',v_expr;
+
+    IF v_expr IS NULL THEN
+        RAISE EXCEPTION 'Table %.% not found or has no columns.', p_schema_name, p_table_name;
+    END IF;
+
+    -- 2. 组装最终的 SQL
+    v_full_sql := 'SELECT upper(md5(' || v_expr || ')) AS row_hash, count(*)::bigint AS duplicate_count ' ||
+                  'FROM ' || quote_ident(p_schema_name) || '.' || quote_ident(p_table_name) || ' ' ||
+                  'GROUP BY md5(' || v_expr || ')' ||
+                  'ORDER BY row_hash;';
+
+    RAISE NOTICE 'MD5: %',v_full_sql;
+
+    -- 3. 使用 RETURN QUERY EXECUTE 直接执行并返回结果集
+    RETURN QUERY EXECUTE v_full_sql;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 函数执行
+SELECT * FROM get_table_hash_result('oms', 'product');
+
+select * from get_table_hash_result('oms','customer');
+
+SELECT
+    COALESCE(trim_scale(product_id::numeric)::text, '-') || '|' ||
+    COALESCE(product_name::text, '-') || '|' ||
+    COALESCE(trim_scale(price::numeric)::text, '-') || '|' ||
+    COALESCE(trim_scale(stock_qty::numeric)::text, '-') || '|' ||
+    COALESCE(to_char(create_date, 'YYYY-MM-DD HH24:MI:SS'), '-') AS pg_str,
+    upper( md5(
+            COALESCE(trim_scale(product_id::numeric)::text, '-') || '|' ||
+            COALESCE(product_name::text, '-') || '|' ||
+            COALESCE(trim_scale(price::numeric)::text, '-') || '|' ||
+            COALESCE(trim_scale(stock_qty::numeric)::text, '-') || '|' ||
+            COALESCE(to_char(create_date, 'YYYY-MM-DD HH24:MI:SS'), '-')
+    ) )AS pg_md5
+FROM product;
+
+
+         INSERT INTO PRODUCT (PRODUCT_ID, PRODUCT_NAME, PRICE, STOCK_QTY, CREATE_DATE)
+VALUES (2006, 'iphone手机', 5888.88, 50, now());
+
+INSERT INTO PRODUCT (PRODUCT_ID, PRODUCT_NAME, PRICE, STOCK_QTY, CREATE_DATE)
+VALUES (2012, 'android手机', 5888.80, 50, now());
+
